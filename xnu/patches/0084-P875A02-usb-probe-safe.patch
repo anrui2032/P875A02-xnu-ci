@@ -1,0 +1,57 @@
+P875A02 USB probe: off by default, only touch readable GCC registers.
+
+Hardware: the probe ran during UFS init and took a synchronous external
+abort on ldr w26,[x19,#0x502c] (GCC cfg-noc-axi CBCR at 0x10502c, not
+backed/clocked at that point). Default P875A02usb=0 now; =1 reports just
+GDSC + master/sleep/utmi CBCRs; =2 additionally starts the DWC3 gadget.
+
+--- a/bsd/dev/P875A02_usb.c
++++ b/bsd/dev/P875A02_usb.c
+@@ -54,10 +54,6 @@
+ 	{ "master", 0x0f010 },
+ 	{ "sleep", 0x0f014 },
+ 	{ "utmi", 0x0f018 },
+-	{ "cfg-noc-axi", 0x0502c },
+-	{ "aggre-axi", 0x8201c },
+-	{ "ahb2phy", 0x6a004 },
+-	{ "clkref", 0x8c010 },
+ };
+ 
+ #define DWC3_PA                 0x0a600000
+@@ -76,7 +72,7 @@
+ void
+ P875A02_usb_probe(void)
+ {
+-	int enabled = 1;
++	int enabled = 0;	/* off by default; P875A02usb=1 reports, 2 starts the gadget */
+ 	uint32_t gdscr, cbcr[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
+ 	bool clocks_on = true;
+ 
+@@ -98,11 +94,15 @@
+ 		    (cbcr[i] & CBCR_CLK_OFF) ? "off" : "on");
+ 	}
+ 	/* DWC3 registers need the GDSC, the master clock and the config-NoC path. */
+-	clocks_on = (gdscr & (1u << 31)) && !(cbcr[0] & CBCR_CLK_OFF) && !(cbcr[3] & CBCR_CLK_OFF);
++	clocks_on = (gdscr & (1u << 31)) && !(cbcr[0] & CBCR_CLK_OFF);
+ 	if (!clocks_on) {
+ 		printf("P875A02 USB: controller unpowered or unclocked; DWC3 not read\n");
+ 		return;
+ 	}
++	if (enabled < 2) {
++		printf("P875A02 USB: report only (P875A02usb=2 to touch DWC3/PHY)\n");
++		return;
++	}
+ 	vm_offset_t dwc = ml_io_map(DWC3_PA, DWC3_SIZE);
+ 	if (dwc == 0) {
+ 		printf("P875A02 USB: DWC3 map failed\n");
+@@ -119,10 +119,6 @@
+ 	if (enabled >= 2) {
+ 		P875A02_usb_gadget_start(dwc);
+ 	}
+-	if (cbcr[5] & CBCR_CLK_OFF) {
+-		printf("P875A02 USB: ahb2phy clock off; QUSB2 PHY not read\n");
+-		return;
+-	}
+ 	vm_offset_t phy = ml_io_map(QUSB2_PA, QUSB2_SIZE);
+ 	if (phy == 0) {
+ 		return;
