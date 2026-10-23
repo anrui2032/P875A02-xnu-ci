@@ -3,7 +3,7 @@ P875A02: "P875A02udp=1" patches usermanagerd's nextsession reader on disk.
 The reader returns {nextuid, curid} after unwrapping nextsession.kb, which
 needs a keybag and APFS. The flag rewrites its first 20 bytes so it returns
 success with {501, 501} before launchd starts; "=2" restores the original
-bytes. Only the kernel changes, so no userdata reflash is needed.
+bytes. Generated against the tree with 0082-0094 applied, like the CI build.
 
 --- a/bsd/dev/P875A02_ufs.c
 +++ b/bsd/dev/P875A02_ufs.c
@@ -17,7 +17,7 @@ bytes. Only the kernel changes, so no userdata reflash is needed.
  #include <kern/locks.h>
  #include <kern/clock.h>
  #include <kern/sched_prim.h>
-@@ -843,6 +846,53 @@
+@@ -904,6 +907,53 @@
  	}
  }
  
@@ -71,11 +71,13 @@ bytes. Only the kernel changes, so no userdata reflash is needed.
  static void
  P875A02_log_start(void)
  {
-@@ -860,6 +910,9 @@
- 	if (kernel_thread_start(P875A02_log_thread, NULL, &thread) == KERN_SUCCESS) {
+@@ -956,6 +1006,11 @@
+ 	if (kr == KERN_SUCCESS) {
  		thread_deallocate(thread);
  	}
-+	if (kernel_thread_start(P875A02_umd_patch_thread, NULL, &thread) == KERN_SUCCESS) {
++	kr = kernel_thread_start(P875A02_umd_patch_thread, NULL, &thread);
++	printf("P875A02 UMD patch: thread start rc=%d\n", kr);
++	if (kr == KERN_SUCCESS) {
 +		thread_deallocate(thread);
 +	}
  }
