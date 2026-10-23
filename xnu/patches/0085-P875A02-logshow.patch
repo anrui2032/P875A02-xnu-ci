@@ -1,11 +1,11 @@
 P875A02: "P875A02logshow=1" prints the tail of the previous persistent
 console log through the UFS driver and parks, so the text stays on the
-framebuffer. Used to see the last IOLog lines before a panic without
-filming the screen.
+framebuffer. Prints the base block and the first header words first, to
+tell a never-written log from a wrong offset.
 
 --- a/bsd/dev/P875A02_ufs.c
 +++ b/bsd/dev/P875A02_ufs.c
-@@ -786,6 +786,62 @@
+@@ -786,6 +786,66 @@
  	}
  }
  
@@ -22,8 +22,12 @@ filming the screen.
 +	void *bounce = (void *)(su.dma + DMA_BOUNCE);
 +	struct P875A02_log_header h;
 +
-+	if (ufs_read_blocks(base, 1)) {
-+		printf("P875A02 LOG: show: header read failed\n");
++	printf("P875A02 LOG: show base=0x%llx nblocks=0x%llx\n", base, su.nblocks);
++	int rdh = ufs_read_blocks(base, 1);
++	uint32_t *w = (uint32_t *)bounce;
++	printf("P875A02 LOG: show read=%d hdr %08x %08x %08x %08x\n",
++	    rdh, w[0], w[1], w[2], w[3]);
++	if (rdh) {
 +		return;
 +	}
 +	memcpy(&h, bounce, sizeof(h));
@@ -68,7 +72,7 @@ filming the screen.
  static void
  P875A02_log_start(void)
  {
-@@ -796,6 +852,13 @@
+@@ -796,6 +856,13 @@
  	if (!on || !su.writable || su.nblocks < 2 * P875A02_LOG_BLOCKS) {
  		return;
  	}
