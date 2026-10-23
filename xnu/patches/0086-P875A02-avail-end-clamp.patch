@@ -1,0 +1,30 @@
+P875A02: keep the hole out of the VM page pool without touching mem_size.
+
+The live low bank ends at 0xB9700000 but memSize is 0x22000000 (ends
+0xBE000000), so 73 MiB of hole reaches the page allocator. mem_size itself
+cannot change: any other value breaks the early framebuffer alias
+relocation. Clamp avail_end/real_avail_end instead.
+
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2002,6 +2002,20 @@
+ 	real_avail_end = avail_end;
+ #endif
+ 
++#if defined(P875A02)
++	/*
++	 * The live ABL /memory low bank ends at 0xB9700000, but the ADT window
++	 * (boot_args memSize) can reach past it - 0x9C000000+0x22000000 ends at
++	 * 0xBE000000, i.e. 73 MiB of hole. mem_size must stay 0x22000000: any
++	 * other value breaks the early framebuffer alias relocation
++	 * (P875A02_early_relocate), so clamp only what the VM may allocate.
++	 */
++	if (avail_end > 0xB9700000) {
++		avail_end = 0xB9700000;
++		real_avail_end = avail_end;
++	}
++#endif
++
+ 	/*
+ 	 * Initialize l1 and l2 page table pages :
+ 	 *   map physical memory at the kernel base virtual address
