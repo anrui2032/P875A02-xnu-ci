@@ -1,8 +1,8 @@
 P875A02: "P875A02logshow=1" prints the tail of the previous persistent
 console log through the UFS driver and parks, so the text stays on the
-framebuffer. log_start also runs a read/write/read-back self-test and
-prints the kernel_thread_start result, to tell a dead log thread from a
-broken UFS write path.
+framebuffer. Before showing, log_start writes a marker to the spare block
+just before the log (read/write/read-back, real header untouched) and
+prints the kernel_thread_start result.
 
 --- a/bsd/dev/P875A02_ufs.c
 +++ b/bsd/dev/P875A02_ufs.c
@@ -73,18 +73,7 @@ broken UFS write path.
  static void
  P875A02_log_start(void)
  {
-@@ -796,11 +856,44 @@
- 	if (!on || !su.writable || su.nblocks < 2 * P875A02_LOG_BLOCKS) {
- 		return;
- 	}
-+	uint32_t show = 0;
-+	if (PE_parse_boot_argn("P875A02logshow", &show, sizeof(show)) && show) {
-+		P875A02_log_show();
-+		for (;;) {
-+			(void)tsleep(&P875A02_log_chan, PZERO, "P875A02logshow", hz);
-+		}
-+	}
- 	PE_parse_boot_argn("ufslogsecs", &P875A02_log_secs, sizeof(P875A02_log_secs));
+@@ -800,7 +860,42 @@
  	if (P875A02_log_secs == 0 || P875A02_log_secs > 60) {
  		P875A02_log_secs = P875A02_LOG_SECS;
  	}
@@ -94,10 +83,11 @@ broken UFS write path.
 +	 * read it back. Decides whether the log thread or the UFS write path is
 +	 * the problem.
 +	 */
-+	void *bounce = (void *)(su.dma + DMA_BOUNCE);
 +	uint64_t base = su.first_block + su.nblocks - P875A02_LOG_BLOCKS;
++	uint64_t tbase = base - 1;	/* spare block, keeps the real header intact */
++	void *bounce = (void *)(su.dma + DMA_BOUNCE);
 +	uint32_t *w = (uint32_t *)bounce;
-+	int err = ufs_read_blocks(base, 1);
++	int err = ufs_read_blocks(tbase, 1);
 +	printf("P875A02 LOG: pre rd=%d hdr %08x %08x %08x %08x\n", err, w[0], w[1], w[2], w[3]);
 +	struct P875A02_log_header h = {
 +		.magic = { 'S', 'W', 'E', 'E', 'T', 'L', 'O', 'G' },
@@ -105,13 +95,21 @@ broken UFS write path.
 +	};
 +	bzero(bounce, UFS_BLOCK);
 +	memcpy(bounce, &h, sizeof(h));
-+	err = ufs_write_blocks(base, 1);
++	err = ufs_write_blocks(tbase, 1);
 +	if (!err) {
 +		err = ufs_sync_cache();
 +	}
 +	printf("P875A02 LOG: wr=%d\n", err);
-+	err = ufs_read_blocks(base, 1);
++	err = ufs_read_blocks(tbase, 1);
 +	printf("P875A02 LOG: post rd=%d hdr %08x %08x %08x %08x\n", err, w[0], w[1], w[2], w[3]);
++
++	uint32_t show = 0;
++	if (PE_parse_boot_argn("P875A02logshow", &show, sizeof(show)) && show) {
++		P875A02_log_show();
++		for (;;) {
++			(void)tsleep(&P875A02_log_chan, PZERO, "P875A02logshow", hz);
++		}
++	}
 +
 +	kern_return_t kr = kernel_thread_start(P875A02_log_thread, NULL, &thread);
 +	printf("P875A02 LOG: thread start rc=%d\n", kr);
