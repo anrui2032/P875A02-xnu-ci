@@ -1,0 +1,34 @@
+P875A02: log the first call per AKS selector and all failures only.
+
+SpringBoard polls selector 17 many times per second; logging every call
+floods the fbcon and its CPU wake budget trips send_resource_violation.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -232,10 +232,22 @@
+ 		break;
+ 	}
+ 
+-	char name[32];
+-	proc_selfname(name, sizeof(name));
+-	IOLog("P875A02 AKS: %s sel %u arg0 %llu in %u/%u out %u/%u -> 0x%x\n", name, selector,
+-	    arg0, in_scalars, in_struct, out_scalars, out_struct, ret);
++	/*
++	 * Log the first call per selector and every failure. The old "log every
++	 * call" flooded the framebuffer console (SpringBoard polls the device
++	 * state dozens of times per second) and the CPU wake budget of those
++	 * console writes tripped send_resource_violation.
++	 */
++	static uint64_t logged;
++	if (selector >= 64 || ret != kIOReturnSuccess || !(logged & (1ULL << selector))) {
++		if (selector < 64 && ret == kIOReturnSuccess) {
++			logged |= 1ULL << selector;
++		}
++		char name[32];
++		proc_selfname(name, sizeof(name));
++		IOLog("P875A02 AKS: %s sel %u arg0 %llu in %u/%u out %u/%u -> 0x%x\n", name, selector,
++		    arg0, in_scalars, in_struct, out_scalars, out_struct, ret);
++	}
+ 	return ret;
+ }
+ #endif /* P875A02 */
