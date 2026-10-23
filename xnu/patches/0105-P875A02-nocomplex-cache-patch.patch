@@ -1,0 +1,68 @@
+P875A02: force the simple bounding path via a dyld cache patch.
+
+-[_UIScreenComplexBoundingPathUtilities isScreenSupported:] returns YES for an
+iPhone X screen, so SpringBoard asks BoundingPathData.bundle for
+BoundingPathBitmap-1125x2436-375x812-3.00x and aborts when the asset manager
+returns nil. With P875A02nocomplex=1 the first instructions of that method in
+dyld_shared_cache_arm64.03 are overwritten with "mov w0,#0; ret".
+
+--- a/bsd/dev/P875A02_ufs.c
++++ b/bsd/dev/P875A02_ufs.c
+@@ -954,6 +954,46 @@
+ 	printf("P875A02 UMD patch: mode %u, error %d\n", mode, error);
+ }
+ 
++/*
++ * "P875A02nocomplex=1": make -[_UIScreenComplexBoundingPathUtilities
++ * isScreenSupported:] return NO in the dyld shared cache, so UIKit uses the
++ * simple rectangular bounding path and never asks BoundingPathData.bundle for
++ * a bitmap. "=2" restores the original instructions.
++ */
++static const uint8_t P875A02_nc_orig[8] = {
++	0xf4, 0x4f, 0xbe, 0xa9, 0xfd, 0x7b, 0x01, 0xa9,
++};
++static const uint8_t P875A02_nc_patch[8] = {
++	0x00, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6,
++};
++#define P875A02_NC_PATH  "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.03"
++#define P875A02_NC_OFF   0x22fdb38
++
++static void
++P875A02_nocomplex_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	uint32_t mode = 0;
++	if (!PE_parse_boot_argn("P875A02nocomplex", &mode, sizeof(mode)) || mode == 0) {
++		return;
++	}
++	for (int i = 0; i < 600 && vfs_rootvnode() == NULL; i++) {
++		(void)tsleep(&P875A02_log_chan, PZERO, "P875A02nc", hz / 10);
++	}
++	vfs_context_t ctx = vfs_context_create(NULL);
++	vnode_t vp = NULL;
++	int error = vnode_lookup(P875A02_NC_PATH, 0, &vp, ctx);
++	if (error == 0) {
++		const uint8_t *buf = mode == 2 ? P875A02_nc_orig : P875A02_nc_patch;
++		int resid = 0;
++		error = vn_rdwr(UIO_WRITE, vp, (caddr_t)buf, sizeof(P875A02_nc_patch),
++		    P875A02_NC_OFF, UIO_SYSSPACE, 0, vfs_context_ucred(ctx), &resid,
++		    current_proc());
++		vnode_put(vp);
++	}
++	vfs_context_rele(ctx);
++	printf("P875A02 nocomplex: mode %u, error %d\n", mode, error);
++}
++
+ static void
+ P875A02_log_start(void)
+ {
+@@ -1006,6 +1046,10 @@
+ 	if (kr == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
++	kr = kernel_thread_start(P875A02_nocomplex_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
+ 	kr = kernel_thread_start(P875A02_umd_patch_thread, NULL, &thread);
+ 	printf("P875A02 UMD patch: thread start rc=%d\n", kr);
+ 	if (kr == KERN_SUCCESS) {
