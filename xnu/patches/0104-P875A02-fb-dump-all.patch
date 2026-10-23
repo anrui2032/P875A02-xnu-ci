@@ -1,0 +1,31 @@
+P875A02: sample every presented frame for non-black content.
+
+P875A02fb_dump=1 used to log only the first eight swaps; sample the centre pixel
+of every frame instead and log the first non-black frames plus a periodic
+counter, to tell whether the render server ever produces content.
+
+--- a/iokit/Kernel/arm/P875A02Framebuffer.cpp
++++ b/iokit/Kernel/arm/P875A02Framebuffer.cpp
+@@ -439,7 +439,21 @@
+ 		    s->memory == NULL || last > s->memory->getLength()) {
+ 			src = 0;
+ 		}
+-		if (src != 0 && bpe == 4 && P875A02_fb_dump && P875A02_fb_swap_count < 8) {
++		if (src != 0 && bpe == 4 && P875A02_fb_dump) {
++			const uint32_t *c = (const uint32_t *)(src + s->offset +
++			    (uint64_t)(sy + h / 2) * s->bytesPerRow + (uint64_t)(sx + w / 2) * 4);
++			static unsigned int nonblack;
++			if (c[0] != 0 && nonblack < 8) {
++				nonblack++;
++				IOLog("P875A02 FB: swap %llu NON-BLACK centre %08x\n",
++				    P875A02_fb_swap_count, c[0]);
++			}
++			if ((P875A02_fb_swap_count % 200) == 0) {
++				IOLog("P875A02 FB: swap %llu sampled centre %08x nonblack %u\n",
++				    P875A02_fb_swap_count, c[0], nonblack);
++			}
++		}
++		if (0) {
+ 			const uint32_t *centre = (const uint32_t *)(src + s->offset +
+ 			    (uint64_t)(sy + h / 2) * s->bytesPerRow + (uint64_t)(sx + w / 2) * 4);
+ 			const uint32_t *first = (const uint32_t *)(src + s->offset +
