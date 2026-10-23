@@ -1,0 +1,78 @@
+P875A02: "P875A02umdpatch=1" patches usermanagerd's nextsession reader on disk.
+
+The reader returns {nextuid, curid} after unwrapping nextsession.kb, which
+needs a keybag and APFS. The flag rewrites its first 20 bytes so it returns
+success with {501, 501} before launchd starts; "=2" restores the original
+bytes. Only the kernel changes, so no userdata reflash is needed.
+
+--- a/bsd/dev/P875A02_ufs.c
++++ b/bsd/dev/P875A02_ufs.c
+@@ -28,6 +28,11 @@
+ #include <sys/proc.h>
+ #include <sys/uio.h>
+ #include <miscfs/devfs/devfs.h>
++#include <sys/vnode.h>
++#include <sys/vfs_context.h>
++#include <sys/kauth.h>
++#include <sys/uio.h>
++#include <sys/proc.h>
+ #include <kern/locks.h>
+ #include <kern/clock.h>
+ #include <kern/sched_prim.h>
+@@ -786,6 +791,46 @@
+ 	}
+ }
+ 
++/*
++ * "P875A02umdpatch=1": rewrite the first 20 bytes of usermanagerd's
++ * nextsession reader so it reports success with {501, 501} instead of reading
++ * /private/var/keybags/nextsession.kb (which needs a keybag and APFS). "=2"
++ * restores the original bytes.
++ */
++static const uint8_t P875A02_umd_orig[20] = {
++	0xfc, 0x6f, 0xba, 0xa9, 0xfa, 0x67, 0x01, 0xa9, 0xf8, 0x5f,
++	0x02, 0xa9, 0xf6, 0x57, 0x03, 0xa9, 0xf4, 0x4f, 0x04, 0xa9,
++};
++static const uint8_t P875A02_umd_patch[20] = {
++	0xa8, 0x3e, 0x80, 0x52, 0x08, 0x00, 0x00, 0xb9, 0x08, 0x04,
++	0x00, 0xb9, 0x20, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6,
++};
++
++static void
++P875A02_umd_patch_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	uint32_t mode = 0;
++
++	if (!PE_parse_boot_argn("P875A02umdpatch", &mode, sizeof(mode)) || mode == 0) {
++		return;
++	}
++	for (int i = 0; i < 600 && vfs_rootvnode() == NULL; i++) {
++		(void)tsleep(&P875A02_log_chan, PZERO, "P875A02umd", hz / 10);
++	}
++	vfs_context_t ctx = vfs_context_create(NULL);
++	vnode_t vp = NULL;
++	int error = vnode_lookup("/usr/libexec/usermanagerd", 0, &vp, ctx);
++	if (error == 0) {
++		const uint8_t *buf = mode == 2 ? P875A02_umd_orig : P875A02_umd_patch;
++		int resid = 0;
++		error = vn_rdwr(UIO_WRITE, vp, (caddr_t)buf, sizeof(P875A02_umd_patch), 0x4185c,
++		    UIO_SYSSPACE, 0, vfs_context_ucred(ctx), &resid, current_proc());
++		vnode_put(vp);
++	}
++	vfs_context_rele(ctx);
++	printf("P875A02 UMD patch: mode %u, error %d\n", mode, error);
++}
++
+ static void
+ P875A02_log_start(void)
+ {
+@@ -803,6 +848,9 @@
+ 	if (kernel_thread_start(P875A02_log_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
++	if (kernel_thread_start(P875A02_umd_patch_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
+ }
+ 
+ /* Root device for rd=ufsroot0 (IOFindBSDRoot). */
