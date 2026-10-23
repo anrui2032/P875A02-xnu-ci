@@ -1,0 +1,43 @@
+P875A02: "P875A02newbag=1" makes GetSystem report no system keybag.
+
+keybagd --init only loads (or creates) systembag.kb when selector 14 answers
+kIOReturnNotFound; with the always-loaded handle it never creates a keybag and
+usermanagerd finds no nextsession.kb, leaving the foreground UID unset. The
+flag is opt-in so the normal boot path is unchanged.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -15,6 +15,7 @@
+  * with kIOReturnUnsupported.
+  */
+ #include <pexpert/arm64/board_config.h>
++#include <pexpert/pexpert.h>
+ 
+ #if defined(P875A02)
+ #include <IOKit/IOService.h>
+@@ -197,7 +198,16 @@
+ 	case kAKSNotifyStateSet:
+ 		args->scalarOutputCount = 0;
+ 		break;
+-	case kAKSGetSystem:
++	case kAKSGetSystem: {
++		uint32_t fresh = 0;
++		PE_parse_boot_argn("P875A02newbag", &fresh, sizeof(fresh));
++		if (fresh) {
++			/* Make keybagd load or create systembag.kb instead of trusting
++			 * the always-loaded handle; a fresh keybag is what creates
++			 * nextsession.kb for usermanagerd. */
++			ret = kIOReturnNotFound;
++			break;
++		}
+ 		if (out_scalars < 1) {
+ 			ret = kIOReturnBadArgument;
+ 			break;
+@@ -205,6 +215,7 @@
+ 		args->scalarOutput[0] = P875A02_AKS_SYSTEM_HANDLE;
+ 		args->scalarOutputCount = 1;
+ 		break;
++	}
+ 	case kAKSGetLockState:
+ 		if (out_scalars < 1) {
+ 			ret = kIOReturnBadArgument;
