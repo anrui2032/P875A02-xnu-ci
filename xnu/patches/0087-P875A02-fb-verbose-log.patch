@@ -1,0 +1,39 @@
+P875A02: "P875A02fblog=1" logs every IOMFB external method call.
+
+The normal log prints each selector once; when backboardd stops producing
+frames the console needs the full call sequence (and its return values).
+
+--- a/iokit/Kernel/arm/P875A02Framebuffer.cpp
++++ b/iokit/Kernel/arm/P875A02Framebuffer.cpp
+@@ -471,6 +471,22 @@
+ 
+ static uint64_t P875A02_fb_logged;        /* selectors already logged (< 64) */
+ 
++/*
++ * "P875A02fblog=1": log every external method call, not just the first one per
++ * selector. Lets the console show the last IOMFB selector backboardd reached
++ * before it stops producing frames.
++ */
++static bool
++P875A02_fb_verbose(void)
++{
++	static int verbose = -1;
++	if (verbose < 0) {
++		uint32_t on = 0;
++		verbose = PE_parse_boot_argn("P875A02fblog", &on, sizeof(on)) && on;
++	}
++	return verbose != 0;
++}
++
+ IOReturn
+ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
+     __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target,
+@@ -556,7 +572,7 @@
+ 	if (args->structureOutputDescriptor == NULL && args->structureOutput != NULL) {
+ 		bzero(args->structureOutput, args->structureOutputSize);
+ 	}
+-	if (selector >= 64 || !(P875A02_fb_logged & (1ULL << selector))) {
++	if (P875A02_fb_verbose() || selector >= 64 || !(P875A02_fb_logged & (1ULL << selector))) {
+ 		if (selector < 64) {
+ 			P875A02_fb_logged |= 1ULL << selector;
+ 		}
