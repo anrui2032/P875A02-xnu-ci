@@ -1,0 +1,28 @@
+P875A02: update the multiuser commpage under the macOS kernel config.
+
+host_set_multiuser_config_flags compiles to KERN_NOT_SUPPORTED because this
+kernel is built with XNU_TARGET_OS_OSX; patch 0096 added its P875A02 branch
+inside the non-OSX path, so it was dead code and usermanagerd still failed to
+set the foreground/multiuser commpage. Handle P875A02 before the guard.
+
+--- a/osfmk/kern/host.c
++++ b/osfmk/kern/host.c
+@@ -1386,7 +1386,17 @@
+ kern_return_t
+ host_set_multiuser_config_flags(host_priv_t host_priv, uint32_t multiuser_config)
+ {
+-#if !defined(XNU_TARGET_OS_OSX)
++#if defined(P875A02)
++	/*
++	 * P875A02: the kernel is built with XNU_TARGET_OS_OSX (macOS config), so
++	 * the upstream body takes the KERN_NOT_SUPPORTED branch and
++	 * usermanagerd's foreground/multiuser commpage update always failed.
++	 * Update the commpage unconditionally; the port is not required here.
++	 */
++	(void)host_priv;
++	commpage_update_multiuser_config(multiuser_config);
++	return KERN_SUCCESS;
++#elif !defined(XNU_TARGET_OS_OSX)
+ #if defined(P875A02)
+ 	/*
+ 	 * P875A02: usermanagerd cannot obtain the host_priv port on this port, so
