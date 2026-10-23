@@ -1,0 +1,84 @@
+P875A02: "P875A02logshow=1" prints the tail of the previous persistent
+console log through the UFS driver and parks, so the text stays on the
+framebuffer. Used to see the last IOLog lines before a panic without
+filming the screen.
+
+--- a/bsd/dev/P875A02_ufs.c
++++ b/bsd/dev/P875A02_ufs.c
+@@ -786,6 +786,62 @@
+ 	}
+ }
+ 
++/*
++ * "P875A02logshow=1": print the tail of the previous boot's persistent log
++ * before anything overwrites it, then park the caller so the text stays on
++ * the framebuffer. Reads through the normal UFS driver (init, DMA, timeouts)
++ * instead of a shim-side SCSI path.
++ */
++static void
++P875A02_log_show(void)
++{
++	uint64_t base = su.first_block + su.nblocks - P875A02_LOG_BLOCKS;
++	void *bounce = (void *)(su.dma + DMA_BOUNCE);
++	struct P875A02_log_header h;
++
++	if (ufs_read_blocks(base, 1)) {
++		printf("P875A02 LOG: show: header read failed\n");
++		return;
++	}
++	memcpy(&h, bounce, sizeof(h));
++	if (memcmp(h.magic, "SWEETLOG", 8) != 0) {
++		printf("P875A02 LOG: show: no SWEETLOG header\n");
++		return;
++	}
++	uint64_t total = h.total;
++	uint32_t want = total > 16384 ? 16384 : (uint32_t)total;
++	uint64_t start = total - want;
++	printf("P875A02 LOG: show total=%llu len=%u\n", total, want);
++
++	char line[128];
++	uint32_t n = 0, cached = 0xffffffff;
++	for (uint64_t pos = start; pos < total; pos++) {
++		uint32_t off = (uint32_t)(pos % P875A02_LOG_SIZE);
++		uint32_t blk = off / UFS_BLOCK;
++		if (blk != cached) {
++			if (ufs_read_blocks(base + 1 + blk, 1))
++				break;
++			cached = blk;
++		}
++		char c = ((const char *)bounce)[off % UFS_BLOCK];
++		if (c == '\r')
++			continue;
++		if (c == '\n' || n == sizeof(line) - 1) {
++			line[n] = 0;
++			printf("%s\n", line);
++			n = 0;
++			if (c == '\n')
++				continue;
++		}
++		if (c >= 0x20 && c < 0x7f)
++			line[n++] = c;
++	}
++	if (n) {
++		line[n] = 0;
++		printf("%s\n", line);
++	}
++}
++
+ static void
+ P875A02_log_start(void)
+ {
+@@ -796,6 +852,13 @@
+ 	if (!on || !su.writable || su.nblocks < 2 * P875A02_LOG_BLOCKS) {
+ 		return;
+ 	}
++	uint32_t show = 0;
++	if (PE_parse_boot_argn("P875A02logshow", &show, sizeof(show)) && show) {
++		P875A02_log_show();
++		for (;;) {
++			(void)tsleep(&P875A02_log_chan, PZERO, "P875A02logshow", hz);
++		}
++	}
+ 	PE_parse_boot_argn("ufslogsecs", &P875A02_log_secs, sizeof(P875A02_log_secs));
+ 	if (P875A02_log_secs == 0 || P875A02_log_secs > 60) {
+ 		P875A02_log_secs = P875A02_LOG_SECS;
