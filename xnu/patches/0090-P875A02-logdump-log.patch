@@ -1,0 +1,51 @@
+P875A02: write the persistent console log to the logdump partition.
+
+The ring used to go to the last blocks of the root partition; nothing ever
+showed up on readback. logdump is a 64 MiB partition at 4K LBA 0x22CA00 just
+below userdata, so it can be dumped with EDL without touching userdata, and
+ufs_write_blocks now permits writes in that range.
+
+--- a/bsd/dev/P875A02_ufs.c
++++ b/bsd/dev/P875A02_ufs.c
+@@ -278,9 +278,13 @@
+ static int
+ ufs_write_blocks(uint64_t lba, uint32_t count)
+ {
++	bool in_part = lba >= su.first_block && lba - su.first_block < su.nblocks &&
++	    count <= su.nblocks - (lba - su.first_block);
++	bool in_dump = lba >= P875A02_LOGDUMP_LBA &&
++	    lba - P875A02_LOGDUMP_LBA < P875A02_LOGDUMP_BLOCKS &&
++	    count <= P875A02_LOGDUMP_BLOCKS - (lba - P875A02_LOGDUMP_LBA);
+ 	if (!su.writable || !su.nblocks || count == 0 || count > BOUNCE_SIZE / UFS_BLOCK ||
+-	    lba < su.first_block || lba - su.first_block >= su.nblocks ||
+-	    count > su.nblocks - (lba - su.first_block) || lba + count - 1 > UINT32_MAX) {
++	    (!in_part && !in_dump) || lba + count - 1 > UINT32_MAX) {
+ 		printf("P875A02 UFS: refusing write of %u blocks at 0x%llx\n", count, lba);
+ 		return EPERM;
+ 	}
+@@ -678,6 +682,9 @@
+  */
+ #define P875A02_LOG_SIZE          (4u << 20)
+ #define P875A02_LOG_BLOCKS        (1 + P875A02_LOG_SIZE / UFS_BLOCK)
++/* logdump from the GPT: 64 MiB at 4K LBA 0x22CA00, just below userdata. */
++#define P875A02_LOGDUMP_LBA       0x22CA00ULL
++#define P875A02_LOGDUMP_BLOCKS    (64ull * 1024 * 1024 / UFS_BLOCK)
+ #define P875A02_LOG_SECS          10u
+ 
+ static char P875A02_log_ring[P875A02_LOG_SIZE];
+@@ -739,12 +746,12 @@
+ static void
+ P875A02_log_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+-	uint64_t base = su.first_block + su.nblocks - P875A02_LOG_BLOCKS;
++	uint64_t base = P875A02_LOGDUMP_LBA;
+ 	uint64_t flushed = 0, seq = 0;
+ 	void *bounce = (void *)(su.dma + DMA_BOUNCE);
+ 
+-	printf("P875A02 LOG: console log to the last %u KiB of the partition (block 0x%llx)\n",
+-	    P875A02_LOG_BLOCKS * UFS_BLOCK >> 10, base);
++	printf("P875A02 LOG: console log to logdump block 0x%llx (%u KiB)\n", base,
++	    P875A02_LOG_BLOCKS * UFS_BLOCK >> 10);
+ 	for (;;) {
+ 		(void)tsleep(&P875A02_log_chan, PZERO, "P875A02log", hz * (int)P875A02_log_secs);
+ 		uint64_t total = os_atomic_load(&P875A02_log_total, relaxed);
