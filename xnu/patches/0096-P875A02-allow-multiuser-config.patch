@@ -1,0 +1,27 @@
+P875A02: allow host_set_multiuser_config_flags without a host_priv port.
+
+usermanagerd never receives the host_priv port on this bring-up, so the
+foreground/multiuser commpage update failed with KERN_INVALID_ARGUMENT even
+after it obtained the right nextuid (501). Update the commpage regardless.
+
+--- a/osfmk/kern/host.c
++++ b/osfmk/kern/host.c
+@@ -1387,9 +1387,18 @@
+ host_set_multiuser_config_flags(host_priv_t host_priv, uint32_t multiuser_config)
+ {
+ #if !defined(XNU_TARGET_OS_OSX)
++#if defined(P875A02)
++	/*
++	 * P875A02: usermanagerd cannot obtain the host_priv port on this port, so
++	 * the foreground/multiuser commpage update was always rejected. Accept the
++	 * null port and update the commpage anyway.
++	 */
++	(void)host_priv;
++#else
+ 	if (host_priv == HOST_PRIV_NULL) {
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
++#endif
+ 
+ 	/*
+ 	 * multiuser bit is extensively used for sharedIpad mode.
