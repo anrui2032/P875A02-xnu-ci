@@ -1,0 +1,25 @@
+P875A02: implement AKS selector 126 (aks_identity_set_primary).
+
+After creating and loading the identity usermanagerd marks it primary; the
+stub's 118 already kept it as the primary identity, so 126 only has to succeed.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -52,6 +52,7 @@
+ 	kAKSIdentityCreateFirst = 118, /* aks_identity_create_first (usermanagerd) */
+ 	kAKSLoadIdentity    = 120,     /* aks_load_identity (usermanagerd) */
+ 	kAKSGetPrimaryIdentity = 125,  /* aks_get_primary_identity (usermanagerd) */
++	kAKSIdentitySetPrimary = 126,  /* aks_identity_set_primary (usermanagerd) */
+ };
+ 
+ /* The system (device) bag handle. */
+@@ -364,6 +365,9 @@
+ 		P875A02_aks_identity_len = P875A02_aks_copyin(args, P875A02_aks_identity,
+ 		    sizeof(P875A02_aks_identity));
+ 		break;
++	case kAKSIdentitySetPrimary:
++		/* The identity created by 118 is already the primary one. */
++		break;
+ 	case kAKSGetPrimaryIdentity:
+ 		if (P875A02_aks_identity_len == 0) {
+ 			ret = kIOReturnNotFound;
