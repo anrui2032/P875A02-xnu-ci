@@ -1,0 +1,37 @@
+P875A02: accept the mach_host_self port as host_priv.
+
+usermanagerd calls host_set_multiuser_config_flags with the port from
+mach_host_self(), and convert_port_to_host_priv rejects it (not itk_host / not
+IKOT_HOST_PRIV), so the foreground/multiuser commpage update never reached the
+function. On this single-user bring-up kernel any valid port is accepted.
+
+--- a/osfmk/kern/ipc_host.c
++++ b/osfmk/kern/ipc_host.c
+@@ -271,6 +271,19 @@
+ {
+ 	host_t host = HOST_NULL;
+ 
++#if defined(P875A02)
++	/*
++	 * P875A02: usermanagerd reaches this with the mach_host_self() port, which
++	 * is not a host_priv kobject, so the multiuser/foreground commpage update
++	 * was always rejected. This is a single-user bring-up kernel: accept any
++	 * valid port as host_priv.
++	 */
++	(void)host;
++	if (IP_VALID(port)) {
++		return &realhost;
++	}
++	return HOST_NULL;
++#else
+ 	/* reject translation if itk_host is not host_priv */
+ 	if (port != current_task()->itk_host) {
+ 		return HOST_NULL;
+@@ -284,6 +297,7 @@
+ 	}
+ 
+ 	return host;
++#endif
+ }
+ 
+ /*
