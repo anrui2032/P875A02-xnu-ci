@@ -1,0 +1,157 @@
+P875A02: emulate AppleKeyStore bags and the user-session identity.
+
+keybagd creates/saves/loads keybags through AKS selectors 2/3/6 and
+usermanagerd asks for the primary identity through 125 (and loads it with 120).
+Without them keybagd could not create nextsession.kb and usermanagerd gave up
+with nextID -1, so SpringBoard never got a foreground UID.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -48,6 +48,8 @@
+ 	kAKSNotifyStateSet   = 102,
+ 	kAKSNotifyStateIsSet = 103,
+ 	kAKSAssertConsume    = 101,     /* aks_assert_consume */
++	kAKSLoadIdentity    = 120,     /* aks_load_identity (usermanagerd) */
++	kAKSGetPrimaryIdentity = 125,  /* aks_get_primary_identity (usermanagerd) */
+ };
+ 
+ /* The system (device) bag handle. */
+@@ -170,6 +172,83 @@
+ 	       (uint32_t)args->structureOutputDescriptor->getLength() : args->structureOutputSize;
+ }
+ 
++/*
++ * Keybag emulation: keybagd creates/saves/loads the system and session keybags
++ * through these selectors. A small in-kernel store is enough for on-demand
++ * keybag creation, and the same table carries the user-session identity
++ * usermanagerd asks for (120/125).
++ */
++struct P875A02_aks_bag {
++	uint32_t used;
++	uint32_t handle;
++	uint32_t len;
++	uint8_t data[512];
++};
++static struct P875A02_aks_bag P875A02_aks_bags[8];
++static uint32_t P875A02_aks_next_handle = 0x100;
++static uint8_t P875A02_aks_identity[256];
++static uint32_t P875A02_aks_identity_len;
++
++static struct P875A02_aks_bag *
++P875A02_aks_bag_find(uint32_t handle, bool create)
++{
++	struct P875A02_aks_bag *free_slot = NULL;
++	for (unsigned int i = 0; i < sizeof(P875A02_aks_bags) / sizeof(P875A02_aks_bags[0]); i++) {
++		if (P875A02_aks_bags[i].used && P875A02_aks_bags[i].handle == handle) {
++			return &P875A02_aks_bags[i];
++		}
++		if (!P875A02_aks_bags[i].used && free_slot == NULL) {
++			free_slot = &P875A02_aks_bags[i];
++		}
++	}
++	if (create && free_slot != NULL) {
++		free_slot->used = 1;
++		free_slot->handle = handle;
++		free_slot->len = 0;
++		return free_slot;
++	}
++	return NULL;
++}
++
++static uint32_t
++P875A02_aks_copyin(IOExternalMethodArguments *args, void *dst, uint32_t max)
++{
++	uint32_t len = args->structureInputDescriptor != NULL ?
++	    (uint32_t)args->structureInputDescriptor->getLength() : args->structureInputSize;
++	if (len > max) {
++		len = max;
++	}
++	if (len == 0) {
++		return 0;
++	}
++	if (args->structureInputDescriptor != NULL) {
++		if (args->structureInputDescriptor->readBytes(0, dst, len) != len) {
++			return 0;
++		}
++	} else {
++		memcpy(dst, args->structureInput, len);
++	}
++	return len;
++}
++
++static uint32_t
++P875A02_aks_copyout(IOExternalMethodArguments *args, const void *src, uint32_t len)
++{
++	uint32_t max = P875A02_aks_struct_out_size(args);
++	if (len > max) {
++		len = max;
++	}
++	if (len == 0) {
++		return 0;
++	}
++	if (args->structureOutputDescriptor != NULL) {
++		args->structureOutputDescriptor->writeBytes(0, src, len);
++	} else {
++		memcpy(args->structureOutput, src, len);
++	}
++	return len;
++}
++
+ IOReturn
+ AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
+     __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target,
+@@ -227,6 +306,54 @@
+ 		args->scalarOutputCount = 0;
+ 		ret = P875A02_aks_device_state(args);
+ 		break;
++	case kAKSCreateBag: {
++		struct P875A02_aks_bag *bag = P875A02_aks_bag_find(++P875A02_aks_next_handle, true);
++		if (bag == NULL) {
++			ret = kIOReturnNoResources;
++			break;
++		}
++		if (out_scalars < 1) {
++			bag->used = 0;
++			ret = kIOReturnBadArgument;
++			break;
++		}
++		args->scalarOutput[0] = bag->handle;
++		args->scalarOutputCount = 1;
++		break;
++	}
++	case kAKSSaveBag: {
++		struct P875A02_aks_bag *bag = P875A02_aks_bag_find((uint32_t)arg0, true);
++		if (bag == NULL) {
++			ret = kIOReturnNoResources;
++			break;
++		}
++		bag->len = P875A02_aks_copyin(args, bag->data, sizeof(bag->data));
++		break;
++	}
++	case kAKSLoadBag: {
++		struct P875A02_aks_bag *bag = P875A02_aks_bag_find((uint32_t)arg0, false);
++		if (bag == NULL || bag->len == 0) {
++			ret = kIOReturnNotFound;
++			break;
++		}
++		if (P875A02_aks_copyout(args, bag->data, bag->len) == 0) {
++			ret = kIOReturnNoSpace;
++		}
++		break;
++	}
++	case kAKSLoadIdentity:
++		P875A02_aks_identity_len = P875A02_aks_copyin(args, P875A02_aks_identity,
++		    sizeof(P875A02_aks_identity));
++		break;
++	case kAKSGetPrimaryIdentity:
++		if (P875A02_aks_identity_len == 0) {
++			ret = kIOReturnNotFound;
++			break;
++		}
++		if (P875A02_aks_copyout(args, P875A02_aks_identity, P875A02_aks_identity_len) == 0) {
++			ret = kIOReturnNoSpace;
++		}
++		break;
+ 	default:
+ 		ret = kIOReturnUnsupported;
+ 		break;
