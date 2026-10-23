@@ -1,0 +1,54 @@
+P875A02: answer AKS selector 8 and keep the display on when asked.
+
+SpringBoard retries selector 8 (no outputs) on every setup pass; SpringBoard
+also powers the panel off through IOMFB method 12 because the skip-setup image
+has no idle-timer preferences. Return success for 8, and with
+P875A02fb_keepon=1 ignore power-off requests.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -299,6 +299,9 @@
+ 		args->scalarOutputCount = 1;
+ 		break;
+ 	}
++	case 8:         /* seen from SpringBoard on iOS 16.7; no outputs */
++		ret = kIOReturnSuccess;
++		break;
+ 	case kAKSGetLockState:
+ 		if (out_scalars < 1) {
+ 			ret = kIOReturnBadArgument;
+--- a/iokit/Kernel/arm/P875A02Framebuffer.cpp
++++ b/iokit/Kernel/arm/P875A02Framebuffer.cpp
+@@ -115,6 +115,7 @@
+ 	bool          fDirty;
+ 	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
++	bool          fKeepOn;        /* P875A02fb_keepon: ignore power off */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+@@ -221,6 +222,11 @@
+ 	}
+ 	uint32_t hz = 10;
+ 	PE_parse_boot_argn("P875A02fb_hz", &hz, sizeof(hz));
++	{
++		int keep = 0;
++		PE_parse_boot_argn("P875A02fb_keepon", &keep, sizeof(keep));
++		fKeepOn = keep != 0;
++	}
+ 	fFlushTicks = (hz == 0 || hz >= 60) ? 1 : 60 / hz;
+ 	fVsync->setTimeoutUS(P875A02_FB_VSYNC_US);
+ 
+@@ -588,6 +594,12 @@
+ 	case kP875A02FBRequestPowerChange:
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
++			if (off && fFB->fKeepOn) {
++				/* The skip-setup image has no idle-timer prefs; keep the
++				 * panel on so the GUI stays visible while bringing up. */
++				IOLog("P875A02 FB: ignoring display off (keepon)\n");
++				break;
++			}
+ 			IOLockLock(fFB->fLock);
+ 			if (off != fFB->fPowerOff) {
+ 				fFB->fPowerOff = off;
