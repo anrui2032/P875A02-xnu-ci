@@ -1,0 +1,31 @@
+P875A02: implement AKS selector 118 (aks_identity_create_first).
+
+With 125 answering kIOReturnNotFound, usermanagerd finds the primary session
+and calls AKSIdentityCreateFirst before loading the identity with 120. The
+stub now stores that first identity so 120/125 succeed and usermanagerd can
+finish binding the system Data volume to the primary session.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -49,6 +49,7 @@
+ 	kAKSNotifyStateSet   = 102,
+ 	kAKSNotifyStateIsSet = 103,
+ 	kAKSAssertConsume    = 101,     /* aks_assert_consume */
++	kAKSIdentityCreateFirst = 118, /* aks_identity_create_first (usermanagerd) */
+ 	kAKSLoadIdentity    = 120,     /* aks_load_identity (usermanagerd) */
+ 	kAKSGetPrimaryIdentity = 125,  /* aks_get_primary_identity (usermanagerd) */
+ };
+@@ -352,6 +353,13 @@
+ 		}
+ 		break;
+ 	}
++	case kAKSIdentityCreateFirst:
++		/* usermanagerd creates the first identity for the primary session
++		 * (36-byte input) and then loads it with 120; keep it as the
++		 * primary identity so 125 can return it. */
++		P875A02_aks_identity_len = P875A02_aks_copyin(args, P875A02_aks_identity,
++		    sizeof(P875A02_aks_identity));
++		break;
+ 	case kAKSLoadIdentity:
+ 		P875A02_aks_identity_len = P875A02_aks_copyin(args, P875A02_aks_identity,
+ 		    sizeof(P875A02_aks_identity));
