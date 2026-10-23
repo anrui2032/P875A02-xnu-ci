@@ -1,0 +1,57 @@
+P875A02: implement AKS wrap/unwrap and the datamigrator selectors.
+
+securityd retries kAKSWrapKey (10) on every failure, which spams the console and
+trips the CPU wake budget; datamigrator asks for 93 and 34. Wrap/unwrap are an
+identity transform (consistent in both directions), 34 answers zero and 93
+returns a zeroed 4 KiB blob.
+
+--- a/iokit/Kernel/arm/P875A02KeyStore.cpp
++++ b/iokit/Kernel/arm/P875A02KeyStore.cpp
+@@ -50,6 +50,8 @@
+ 	kAKSNotifyStateIsSet = 103,
+ 	kAKSAssertConsume    = 101,     /* aks_assert_consume */
+ 	kAKSIdentityCreateFirst = 118, /* aks_identity_create_first (usermanagerd) */
++	kAKSMigrateGet      = 34,      /* datamigrator (2 scalars in, 1 out) */
++	kAKSMigrateBlob     = 93,      /* datamigrator (1 scalar in, 4 KiB out) */
+ 	kAKSLoadIdentity    = 120,     /* aks_load_identity (usermanagerd) */
+ 	kAKSGetPrimaryIdentity = 125,  /* aks_get_primary_identity (usermanagerd) */
+ 	kAKSIdentitySetPrimary = 126,  /* aks_identity_set_primary (usermanagerd) */
+@@ -353,6 +355,38 @@
+ 			ret = kIOReturnNoSpace;
+ 		}
+ 		break;
++	}
++	case kAKSWrapKey:
++	case kAKSUnwrapKey: {
++		/* Identity wrap: return the input unchanged so wrap/unwrap agree. */
++		uint8_t buf[512];
++		uint32_t n = P875A02_aks_copyin(args, buf, sizeof(buf));
++		if (n == 0) {
++			ret = kIOReturnBadArgument;
++			break;
++		}
++		if (out_scalars > 0) {
++			args->scalarOutput[0] = 0;
++			args->scalarOutputCount = 1;
++		}
++		if (P875A02_aks_copyout(args, buf, n) == 0) {
++			ret = kIOReturnNoSpace;
++		}
++		break;
++	}
++	case kAKSMigrateGet:
++		if (out_scalars > 0) {
++			args->scalarOutput[0] = 0;
++			args->scalarOutputCount = 1;
++		}
++		break;
++	case kAKSMigrateBlob: {
++		uint8_t zeros[4096];
++		bzero(zeros, sizeof(zeros));
++		if (P875A02_aks_copyout(args, zeros, sizeof(zeros)) == 0) {
++			ret = kIOReturnNoSpace;
++		}
++		break;
+ 	}
+ 	case kAKSIdentityCreateFirst:
+ 		/* usermanagerd creates the first identity for the primary session
