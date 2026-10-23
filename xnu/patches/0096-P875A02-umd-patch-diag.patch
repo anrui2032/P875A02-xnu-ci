@@ -1,0 +1,25 @@
+P875A02: diagnose the usermanagerd patch thread.
+
+Print at thread entry and after parsing, and accept a short boot argument
+(P875A02udp) besides P875A02umdpatch: the thread previously returned silently
+when the argument was not seen.
+
+--- a/bsd/dev/P875A02_ufs.c
++++ b/bsd/dev/P875A02_ufs.c
+@@ -810,8 +810,15 @@
+ P875A02_umd_patch_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+ 	uint32_t mode = 0;
++	uint32_t have = 0;
+ 
+-	if (!PE_parse_boot_argn("P875A02umdpatch", &mode, sizeof(mode)) || mode == 0) {
++	printf("P875A02 UMD patch: thread start\n");
++	have = PE_parse_boot_argn("P875A02udp", &mode, sizeof(mode));
++	if (!have) {
++		have = PE_parse_boot_argn("P875A02umdpatch", &mode, sizeof(mode));
++	}
++	printf("P875A02 UMD patch: arg %u mode %u\n", have, mode);
++	if (!have || mode == 0) {
+ 		return;
+ 	}
+ 	for (int i = 0; i < 600 && vfs_rootvnode() == NULL; i++) {
