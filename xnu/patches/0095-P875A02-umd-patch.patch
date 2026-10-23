@@ -1,4 +1,4 @@
-P875A02: "P875A02umdpatch=1" patches usermanagerd's nextsession reader on disk.
+P875A02: "P875A02udp=1" patches usermanagerd's nextsession reader on disk.
 
 The reader returns {nextuid, curid} after unwrapping nextsession.kb, which
 needs a keybag and APFS. The flag rewrites its first 20 bytes so it returns
@@ -7,25 +7,23 @@ bytes. Only the kernel changes, so no userdata reflash is needed.
 
 --- a/bsd/dev/P875A02_ufs.c
 +++ b/bsd/dev/P875A02_ufs.c
-@@ -28,6 +28,11 @@
+@@ -28,6 +28,9 @@
  #include <sys/proc.h>
  #include <sys/uio.h>
  #include <miscfs/devfs/devfs.h>
 +#include <sys/vnode.h>
 +#include <sys/vfs_context.h>
 +#include <sys/kauth.h>
-+#include <sys/uio.h>
-+#include <sys/proc.h>
  #include <kern/locks.h>
  #include <kern/clock.h>
  #include <kern/sched_prim.h>
-@@ -786,6 +791,46 @@
+@@ -843,6 +846,53 @@
  	}
  }
  
 +/*
-+ * "P875A02umdpatch=1": rewrite the first 20 bytes of usermanagerd's
-+ * nextsession reader so it reports success with {501, 501} instead of reading
++ * "P875A02udp=1": rewrite the first 20 bytes of usermanagerd's nextsession
++ * reader so it reports success with {501, 501} instead of reading
 + * /private/var/keybags/nextsession.kb (which needs a keybag and APFS). "=2"
 + * restores the original bytes.
 + */
@@ -42,8 +40,15 @@ bytes. Only the kernel changes, so no userdata reflash is needed.
 +P875A02_umd_patch_thread(__unused void *arg, __unused wait_result_t wr)
 +{
 +	uint32_t mode = 0;
++	uint32_t have = 0;
 +
-+	if (!PE_parse_boot_argn("P875A02umdpatch", &mode, sizeof(mode)) || mode == 0) {
++	printf("P875A02 UMD patch: thread start\n");
++	have = PE_parse_boot_argn("P875A02udp", &mode, sizeof(mode));
++	if (!have) {
++		have = PE_parse_boot_argn("P875A02umdpatch", &mode, sizeof(mode));
++	}
++	printf("P875A02 UMD patch: arg %u mode %u\n", have, mode);
++	if (!have || mode == 0) {
 +		return;
 +	}
 +	for (int i = 0; i < 600 && vfs_rootvnode() == NULL; i++) {
@@ -66,7 +71,7 @@ bytes. Only the kernel changes, so no userdata reflash is needed.
  static void
  P875A02_log_start(void)
  {
-@@ -803,6 +848,9 @@
+@@ -860,6 +910,9 @@
  	if (kernel_thread_start(P875A02_log_thread, NULL, &thread) == KERN_SUCCESS) {
  		thread_deallocate(thread);
  	}
