@@ -1,7 +1,8 @@
 P875A02: "P875A02logshow=1" prints the tail of the previous persistent
 console log through the UFS driver and parks, so the text stays on the
-framebuffer. Prints the base block and the first header words first, to
-tell a never-written log from a wrong offset.
+framebuffer. log_start also runs a read/write/read-back self-test and
+prints the kernel_thread_start result, to tell a dead log thread from a
+broken UFS write path.
 
 --- a/bsd/dev/P875A02_ufs.c
 +++ b/bsd/dev/P875A02_ufs.c
@@ -72,7 +73,7 @@ tell a never-written log from a wrong offset.
  static void
  P875A02_log_start(void)
  {
-@@ -796,6 +856,13 @@
+@@ -796,11 +856,44 @@
  	if (!on || !su.writable || su.nblocks < 2 * P875A02_LOG_BLOCKS) {
  		return;
  	}
@@ -86,3 +87,35 @@ tell a never-written log from a wrong offset.
  	PE_parse_boot_argn("ufslogsecs", &P875A02_log_secs, sizeof(P875A02_log_secs));
  	if (P875A02_log_secs == 0 || P875A02_log_secs > 60) {
  		P875A02_log_secs = P875A02_LOG_SECS;
+ 	}
+-	if (kernel_thread_start(P875A02_log_thread, NULL, &thread) == KERN_SUCCESS) {
++	/*
++	 * Self-test: show what the previous boot left, write a marker header,
++	 * read it back. Decides whether the log thread or the UFS write path is
++	 * the problem.
++	 */
++	void *bounce = (void *)(su.dma + DMA_BOUNCE);
++	uint64_t base = su.first_block + su.nblocks - P875A02_LOG_BLOCKS;
++	uint32_t *w = (uint32_t *)bounce;
++	int err = ufs_read_blocks(base, 1);
++	printf("P875A02 LOG: pre rd=%d hdr %08x %08x %08x %08x\n", err, w[0], w[1], w[2], w[3]);
++	struct P875A02_log_header h = {
++		.magic = { 'S', 'W', 'E', 'E', 'T', 'L', 'O', 'G' },
++		.version = 1, .size = P875A02_LOG_SIZE, .total = 0, .seq = 0x5eed,
++	};
++	bzero(bounce, UFS_BLOCK);
++	memcpy(bounce, &h, sizeof(h));
++	err = ufs_write_blocks(base, 1);
++	if (!err) {
++		err = ufs_sync_cache();
++	}
++	printf("P875A02 LOG: wr=%d\n", err);
++	err = ufs_read_blocks(base, 1);
++	printf("P875A02 LOG: post rd=%d hdr %08x %08x %08x %08x\n", err, w[0], w[1], w[2], w[3]);
++
++	kern_return_t kr = kernel_thread_start(P875A02_log_thread, NULL, &thread);
++	printf("P875A02 LOG: thread start rc=%d\n", kr);
++	if (kr == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
+ }
