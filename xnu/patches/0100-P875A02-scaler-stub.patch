@@ -1,0 +1,60 @@
+P875A02: stub AppleM2ScalerCSCDriver so backboardd stops retrying.
+
+backboardd matches the display scaler/CSC driver; without it IOServiceMatching
+fails in a loop that keeps the first present from arriving, so the kernel
+console keeps drawing over the screen and the GUI never appears. Publish a
+service with the expected class name in the framebuffer driver.
+
+--- a/iokit/Kernel/arm/P875A02Framebuffer.cpp
++++ b/iokit/Kernel/arm/P875A02Framebuffer.cpp
+@@ -149,6 +149,33 @@
+ 
+ OSDefineMetaClassAndStructors(IOMobileFramebufferUserClient, IOUserClient);
+ 
++/*
++ * P875A02: AppleM2ScalerCSCDriver stub.
++ *
++ * backboardd matches the display scaler/CSC driver while it sets up the
++ * display; without it IOServiceMatching fails in a loop that keeps the first
++ * present from arriving, so the kernel console keeps drawing over the screen.
++ */
++class AppleM2ScalerCSCDriver : public IOService {
++	OSDeclareDefaultStructors(AppleM2ScalerCSCDriver)
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(AppleM2ScalerCSCDriver, IOService)
++
++bool
++AppleM2ScalerCSCDriver::start(IOService *provider)
++{
++	if (!IOService::start(provider)) {
++		return false;
++	}
++	setProperty("IOClass", "AppleM2ScalerCSCDriver");
++	registerService();
++	IOLog("P875A02: AppleM2ScalerCSCDriver stub started\n");
++	return true;
++}
++
+ bool
+ AppleCLCD::start(IOService *provider)
+ {
+@@ -198,6 +225,16 @@
+ 	fVsync->setTimeoutUS(P875A02_FB_VSYNC_US);
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
++	{
++		AppleM2ScalerCSCDriver *scaler = new AppleM2ScalerCSCDriver;
++		if (scaler != NULL && scaler->init()) {
++			scaler->attach(this);
++			scaler->start(this);
++		} else {
++			OSSafeReleaseNULL(scaler);
++		}
++	}
++
+ 	setProperty("external", false);
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+ 	registerService();
