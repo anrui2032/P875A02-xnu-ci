@@ -1,0 +1,17 @@
+P875A02: only clamp avail_end for the low-bank window.
+
+Patch 0086 clamps to 0xB9700000 unconditionally; with the high-memory window
+(phys_base 0x100000000) that would put avail_end below avail_start. Clamp only
+when the window starts in the low bank and spans the hole.
+
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2010,7 +2010,7 @@
+ 	 * other value breaks the early framebuffer alias relocation
+ 	 * (P875A02_early_relocate), so clamp only what the VM may allocate.
+ 	 */
+-	if (avail_end > 0xB9700000) {
++	if (avail_start < 0xB9700000 && avail_end > 0xB9700000) {
+ 		avail_end = 0xB9700000;
+ 		real_avail_end = avail_end;
+ 	}
